@@ -15,6 +15,7 @@ import (
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/ringbuf"
 	"log/slog"
+	"net"
 	packetLoggingErrors "packet_logging/pkg/errors"
 	"path/filepath"
 	"strconv"
@@ -110,7 +111,9 @@ func EnrichWithConnectEvent(base *ecs.Base, event *BpfConnectEvent) {
 		ecsSource.Ip = motmedelNet.IntToIpv4(event.SaddrV4).String()
 		ecsDestination.Ip = motmedelNet.IntToIpv4(event.DaddrV4).String()
 	} else if event.Af == syscall.AF_INET6 {
-		// TODO: Implement
+		// TODO: Confirm that this is correct.
+		ecsSource.Ip = net.IP(event.SaddrV6[:]).String()
+		ecsDestination.Ip = net.IP(event.DaddrV6[:]).String()
 	}
 
 	ecsProcess := base.Process
