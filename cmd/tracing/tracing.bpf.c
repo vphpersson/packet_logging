@@ -28,7 +28,6 @@ struct execve_event {
 	u32 gid;
 	u32 pid;
 	u32 ppid;
-    u8 interactive;
 
 	u8  comm[ARGSIZE];
 };
@@ -55,7 +54,6 @@ static struct execve_event zero_execve_event SEC(".rodata") = {
 	.gid = 0,
 	.pid = 0,
 	.ppid = 0,
-    .interactive = 0,
 	.comm = {0},
 };
 
@@ -84,27 +82,6 @@ s32 enter_execve(struct exec_info *execve_ctx) {
     event->pid = bpf_htonl(bpf_get_current_pid_tgid() >> 32);
     struct task_struct *task = (struct task_struct *)bpf_get_current_task();
     event->ppid = bpf_htonl(BPF_CORE_READ(task, real_parent, pid));
-
-
-//   struct files_struct *files = task->files;
-//   struct fdtable *fdt = files->fdt;
-
-//    if (fdt) {
-//        struct file *file_stdin = fdt->fd[0];
-//        struct file *file_stderr = fdt->fd[2];
-
-//        if (!(!file_stdin || !file_stderr)) {
-//            dev_t stdin_dev = file_stdin->f_inode->i_rdev;
-//            dev_t stderr_dev = file_stderr->f_inode->i_rdev;
-//
-//            struct tty_struct *tty = task->signal->tty;
-//            if (tty) {
-//                if (stdin_dev == tty->dev->id && stderr_dev == tty->dev->id) {
-//                    event->interactive = 1;
-//                }
-//            }
-//        }
-//    }
 
     ret = bpf_get_current_comm(&event->comm, sizeof(event->comm));
     if (ret) {
