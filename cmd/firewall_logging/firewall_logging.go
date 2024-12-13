@@ -34,6 +34,7 @@ func main() {
 		),
 	)
 	logger = logger.With(slog.Group("event", slog.String("dataset", dataset)))
+	slog.SetDefault(logger)
 
 	groupFlag := flag.Int("group", 0, "The NFLOG group to listen on.")
 	flag.Parse()
@@ -75,7 +76,29 @@ func main() {
 		func(attrs nflog.Attribute) int {
 			timestamp := time.Now()
 
+			//var payload []byte
+			//if payloadPtr := attrs.Payload; payloadPtr != nil {
+			//	payload = *payloadPtr
+			//}
+			//
+			//if prefixPtr := attrs.Prefix; prefixPtr != nil {
+			//	prefix := *prefixPtr
+			//
+			//	// Special cases
+			//
+			//	if strings.HasPrefix(prefix, "FIRST_CLIENT_DATA-") && len(payload) == 0 {
+			//		fmt.Println("skipping")
+			//		return 0
+			//	}
+			//
+			//	if strings.HasPrefix(prefix, "FIRST_SERVER_DATA-") && len(payload) == 0 {
+			//		fmt.Println("skipping")
+			//		return 0
+			//	}
+			//}
+
 			document := &ecs.Base{Event: &ecs.Event{Dataset: dataset}}
+
 			packet_logging.EnrichWithNflogAttribute(&attrs, document)
 
 			if document.Timestamp == "" {
@@ -87,11 +110,7 @@ func main() {
 				msg := "An error occurred when marshalling a document."
 				motmedelLog.LogError(
 					fmt.Sprintf("%s Skipping.", msg),
-					&motmedelErrors.InputError{
-						Message: msg,
-						Cause:   err,
-						Input:   document,
-					},
+					&motmedelErrors.InputError{Message: msg, Cause: err, Input: document},
 					logger,
 				)
 				return 0

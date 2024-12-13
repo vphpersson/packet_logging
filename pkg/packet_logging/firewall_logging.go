@@ -8,7 +8,6 @@ import (
 	"github.com/gopacket/gopacket/layers"
 	"net"
 	"os/user"
-	types "packet_logging/pkg/types"
 	"strconv"
 	"strings"
 )
@@ -28,48 +27,6 @@ var netfilterHookIdToName = map[int]string{
 	4: "postrouting",
 }
 
-func parsePayload(payload []byte) *types.LayerCollection {
-	if len(payload) == 0 {
-		return nil
-	}
-
-	for _, ipVersion := range []int{4, 6} {
-		layerCollection := types.LayerCollection{IpVersion: ipVersion}
-
-		ok := func() bool {
-			if ipVersion == 4 {
-				err := gopacket.NewDecodingLayerParser(
-					layers.LayerTypeIPv4,
-					&layerCollection.Ip4,
-					&layerCollection.Tcp,
-					&layerCollection.Udp,
-				).DecodeLayers(payload, &layerCollection.DecodedLayerTypes)
-				if err == nil {
-					return true
-				}
-			} else {
-				err := gopacket.NewDecodingLayerParser(
-					layers.LayerTypeIPv6,
-					&layerCollection.Ip6,
-					&layerCollection.Tcp,
-					&layerCollection.Udp,
-				).DecodeLayers(payload, &layerCollection.DecodedLayerTypes)
-				if err == nil {
-					return true
-				}
-			}
-
-			return false
-		}()
-
-		if ok {
-			return &layerCollection
-		}
-	}
-
-	return nil
-}
-
 func EnrichWithNflogAttribute(nflogAttribute *nflog.Attribute, base *ecs.Base) {
 	if nflogAttribute == nil {
 		return
@@ -86,21 +43,13 @@ func EnrichWithNflogAttribute(nflogAttribute *nflog.Attribute, base *ecs.Base) {
 
 	payload := nflogAttribute.Payload
 	if payload != nil && len(*payload) != 0 {
-		layerCollection := parsePayload(*payload)
-		if layerCollection != nil {
-			decodedLayerTypes := layerCollection.DecodedLayerTypes
-			for _, layerType := range decodedLayerTypes {
-				switch layerType {
-				case layers.LayerTypeIPv4:
-					EnrichFromIpv4Layer(&layerCollection.Ip4, base)
-				case layers.LayerTypeIPv6:
-					EnrichFromIpv6Layer(&layerCollection.Ip6, base)
-				case layers.LayerTypeTCP:
-					EnrichFromTcpLayer(&layerCollection.Tcp, base)
-				case layers.LayerTypeUDP:
-					EnrichFromUdpLayer(&layerCollection.Udp, base)
-				}
-			}
+		packet := gopacket.NewPacket(*payload, layers.LayerTypeIPv4, gopacket.Default)
+		if ipv4Layer := packet.Layer(layers.LayerTypeIPv4); ipv4Layer == nil {
+			packet = gopacket.NewPacket(*payload, layers.LayerTypeIPv6, gopacket.Default)
+		}
+
+		for _, layer := range packet.Layers() {
+			EnrichFromLayer(base, layer, packet)
 		}
 	}
 
