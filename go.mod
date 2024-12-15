@@ -3,7 +3,7 @@ module packet_logging
 go 1.23.4
 
 require (
-	github.com/Motmedel/ecs_go v0.0.35
+	github.com/Motmedel/ecs_go v0.0.36
 	github.com/Motmedel/utils_go v0.0.63
 	github.com/Motmedel/utils_go/pkg/net/domain_breakdown v0.0.1
 	github.com/cilium/ebpf v0.16.0

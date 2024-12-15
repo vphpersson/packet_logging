@@ -1,6 +1,7 @@
 package packet_logging
 
 import (
+	"fmt"
 	"github.com/Motmedel/ecs_go/ecs"
 	motmedelNet "github.com/Motmedel/utils_go/pkg/net/domain_breakdown"
 	"github.com/gopacket/gopacket"
@@ -371,4 +372,65 @@ func EnrichFromUdpLayer(udpLayer *layers.UDP, base *ecs.Base) {
 
 	ecsNetwork.IanaNumber = "17"
 	ecsNetwork.Transport = "udp"
+}
+
+func MakeConnectionMessage(title string, suffix string, base *ecs.Base) string {
+	message := fmt.Sprintf("%s: (incomplete information)", title)
+	if suffix != "" {
+		message += fmt.Sprintf(" - %s", suffix)
+	}
+
+	if base == nil {
+		return message
+	}
+
+	ecsSource := base.Source
+	if ecsSource == nil {
+		return message
+	}
+	sourceIpAddress := ecsSource.Ip
+	if sourceIpAddress == "" {
+		return message
+	}
+	sourcePort := ecsSource.Port
+	if sourcePort == 0 {
+		return message
+	}
+
+	ecsDestination := base.Destination
+	if ecsDestination == nil {
+		return message
+	}
+	destinationIpAddress := ecsDestination.Ip
+	if destinationIpAddress == "" {
+		return message
+	}
+	destinationPort := ecsDestination.Port
+	if destinationPort == 0 {
+		return message
+	}
+
+	ecsNetwork := base.Network
+	if ecsNetwork == nil {
+		return message
+	}
+	transport := ecsNetwork.Transport
+	if transport == "" {
+		return message
+	}
+
+	message = fmt.Sprintf(
+		"%s: [%s]:%d -> [%s]:%d %s",
+		title,
+		sourceIpAddress,
+		sourcePort,
+		destinationIpAddress,
+		destinationPort,
+		transport,
+	)
+	if suffix != "" {
+		message += fmt.Sprintf(" - %s", suffix)
+	}
+
+	return message
 }
