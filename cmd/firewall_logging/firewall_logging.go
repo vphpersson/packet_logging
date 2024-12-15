@@ -110,12 +110,12 @@ func main() {
 				document.Timestamp = timestamp.UTC().Format("2006-01-02T15:04:05.999999999Z")
 			}
 
-			var ruleName string
+			var suffix string
 			if ecsRule := document.Rule; ecsRule != nil {
-				ruleName = ecsRule.Name
+				suffix = fmt.Sprintf("%s-%s %s", ecsRule.Ruleset, ecsRule.Name, document.Event.Action)
 			}
 
-			document.Message = packet_logging.MakeConnectionMessage("Firewall", ruleName, document)
+			document.Message = packet_logging.MakeConnectionMessage("Firewall", suffix, document)
 
 			documentData, err := json.Marshal(document)
 			if err != nil {
