@@ -20,8 +20,6 @@ import (
 	"time"
 )
 
-const dataset = "tracing"
-
 type TimedEvecveEntry struct {
 	Event *packet_logging.BpfExecveEvent
 	Timer *time.Timer
@@ -34,6 +32,7 @@ func ProcessExists(pid int) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	defer process.Release()
 
 	return process.Signal(syscall.Signal(0)) == nil, nil
 }
@@ -68,7 +67,7 @@ func main() {
 			),
 		),
 	)
-	logger = logger.With(slog.Group("event", slog.String("dataset", dataset)))
+	logger = logger.With(slog.Group("event", slog.String("dataset", "tracing")))
 	slog.SetDefault(logger)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -137,7 +136,7 @@ func main() {
 					}
 					tracing.EnrichWithExecveEvent(base, event)
 
-					_, err := json.Marshal(base)
+					data, err := json.Marshal(base)
 					if err != nil {
 						msg := "An error occurred when marshalling a destroy connection base."
 						motmedelLog.LogError(
@@ -148,9 +147,9 @@ func main() {
 						return
 					}
 
-					//printMutex.Lock()
-					//fmt.Println(string(data))
-					//printMutex.Unlock()
+					printMutex.Lock()
+					fmt.Println(string(data))
+					printMutex.Unlock()
 				}()
 
 				key := event.ProcessId

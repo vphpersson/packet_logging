@@ -27,4 +27,5 @@ go.work
 /cmd/firewall_logging/firewall_logging
 /cmd/packet_capture_logging/packet_capture_logging
 /cmd/tracing/tracing
+/cmd/packet_capture_logging/packet_capture_loggirg
 /pkg/packet_logging/packet_logging_bpf_bpfel.go
