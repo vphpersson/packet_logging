@@ -97,13 +97,25 @@ func main() {
 			//	}
 			//}
 
-			document := &ecs.Base{Event: &ecs.Event{Dataset: dataset}}
+			document := &ecs.Base{
+				Event: &ecs.Event{
+					Dataset: dataset,
+					Reason:  "A packet matched a firewall logging rule.",
+				},
+			}
 
 			packet_logging.EnrichWithNflogAttribute(&attrs, document)
 
 			if document.Timestamp == "" {
 				document.Timestamp = timestamp.UTC().Format("2006-01-02T15:04:05.999999999Z")
 			}
+
+			var ruleName string
+			if ecsRule := document.Rule; ecsRule != nil {
+				ruleName = ecsRule.Name
+			}
+
+			document.Message = packet_logging.MakeConnectionMessage("Firewall", ruleName, document)
 
 			documentData, err := json.Marshal(document)
 			if err != nil {
