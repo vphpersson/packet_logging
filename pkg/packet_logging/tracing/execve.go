@@ -32,8 +32,8 @@ func EnrichWithExecveEvent(base *ecs.Base, event *packet_logging.BpfExecveEvent)
 	executable := string(bytes.TrimRight(event.Filename[:], "\x00"))
 
 	var argvStrings []string
-	for _, arg := range event.Argv {
-		argString := string(bytes.TrimRight(arg[:], "\x00"))
+	for i := uint32(0); i < event.Argc && int(i) < len(event.Argv); i++ {
+		argString := string(bytes.TrimRight(event.Argv[i][:], "\x00"))
 		if argString != "" {
 			argvStrings = append(argvStrings, argString)
 		}

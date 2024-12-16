@@ -63,9 +63,9 @@ static struct execve_event zero_execve_event SEC(".rodata") = {
 
     .process_id = 0,
     .parent_process_id = 0,
-    .process_title = {},
+    .process_title = {0},
 
-    .filename = {},
+    .filename = {0},
     .argv = {},
     .argc = 0,
 };
@@ -177,7 +177,7 @@ static struct connect_event zero_connect_event SEC(".rodata") = {
 
     .process_id = 0,
     .parent_process_id = 0,
-    .process_title = {},
+    .process_title = {0},
 
     .source_address = 0,
     .destination_address = 0,

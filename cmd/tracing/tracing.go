@@ -25,8 +25,6 @@ type TimedEvecveEntry struct {
 	Timer *time.Timer
 }
 
-// TODO: Replace with standard-library function.
-
 func ProcessExists(pid int) (bool, error) {
 	process, err := os.FindProcess(pid)
 	if err != nil {
