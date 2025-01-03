@@ -235,19 +235,27 @@ func EnrichFromIpv4Layer(ipv4Layer *layers.IPv4, base *ecs.Base) {
 		return
 	}
 
-	ecsSource := base.Source
-	if ecsSource == nil {
-		ecsSource = &ecs.Target{}
-		base.Source = ecsSource
-	}
-	ecsSource.Ip = ipv4Layer.SrcIP.String()
+	layerSourceIp := ipv4Layer.SrcIP
+	if len(layerSourceIp) != 0 {
+		ecsSource := base.Source
+		if ecsSource == nil {
+			ecsSource = &ecs.Target{}
+			base.Source = ecsSource
+		}
 
-	ecsDestination := base.Destination
-	if ecsDestination == nil {
-		ecsDestination = &ecs.Target{}
-		base.Destination = ecsDestination
+		ecsSource.Ip = layerSourceIp.String()
 	}
-	ecsDestination.Ip = ipv4Layer.DstIP.String()
+
+	layerDestinationIp := ipv4Layer.DstIP
+	if len(layerDestinationIp) != 0 {
+		ecsDestination := base.Destination
+		if ecsDestination == nil {
+			ecsDestination = &ecs.Target{}
+			base.Destination = ecsDestination
+		}
+
+		ecsDestination.Ip = layerDestinationIp.String()
+	}
 
 	ecsNetwork := base.Network
 	if ecsNetwork == nil {
@@ -270,19 +278,27 @@ func EnrichFromIpv6Layer(ipv6Layer *layers.IPv6, base *ecs.Base) {
 		return
 	}
 
-	ecsSource := base.Source
-	if ecsSource == nil {
-		ecsSource = &ecs.Target{}
-		base.Source = ecsSource
-	}
-	ecsSource.Ip = ipv6Layer.SrcIP.String()
+	layerSourceIp := ipv6Layer.SrcIP
+	if len(layerSourceIp) != 0 {
+		ecsSource := base.Source
+		if ecsSource == nil {
+			ecsSource = &ecs.Target{}
+			base.Source = ecsSource
+		}
 
-	ecsDestination := base.Destination
-	if ecsDestination == nil {
-		ecsDestination = &ecs.Target{}
-		base.Destination = ecsDestination
+		ecsSource.Ip = layerSourceIp.String()
 	}
-	ecsDestination.Ip = ipv6Layer.DstIP.String()
+
+	layerDestinationIp := ipv6Layer.DstIP
+	if len(layerDestinationIp) != 0 {
+		ecsDestination := base.Destination
+		if ecsDestination == nil {
+			ecsDestination = &ecs.Target{}
+			base.Destination = ecsDestination
+		}
+
+		ecsDestination.Ip = layerDestinationIp.String()
+	}
 
 	ecsNetwork := base.Network
 	if ecsNetwork == nil {
@@ -305,19 +321,24 @@ func EnrichFromTcpLayer(tcpLayer *layers.TCP, base *ecs.Base) {
 		return
 	}
 
-	ecsSource := base.Source
-	if ecsSource == nil {
-		ecsSource = &ecs.Target{}
-		base.Source = ecsSource
+	if sourcePort := tcpLayer.SrcPort; sourcePort != 0 {
+		ecsSource := base.Source
+		if ecsSource == nil {
+			ecsSource = &ecs.Target{}
+			base.Source = ecsSource
+		}
+		ecsSource.Port = int(sourcePort)
 	}
-	ecsSource.Port = int(tcpLayer.SrcPort)
 
-	ecsDestination := base.Destination
-	if ecsDestination == nil {
-		ecsDestination = &ecs.Target{}
-		base.Destination = ecsDestination
+	if destinationPort := tcpLayer.DstPort; destinationPort != 0 {
+		ecsDestination := base.Destination
+		if ecsDestination == nil {
+			ecsDestination = &ecs.Target{}
+			base.Destination = ecsDestination
+		}
+
+		ecsDestination.Port = int(destinationPort)
 	}
-	ecsDestination.Port = int(tcpLayer.DstPort)
 
 	ecsNetwork := base.Network
 	if ecsNetwork == nil {
@@ -350,19 +371,25 @@ func EnrichFromUdpLayer(udpLayer *layers.UDP, base *ecs.Base) {
 		return
 	}
 
-	ecsSource := base.Source
-	if ecsSource == nil {
-		ecsSource = &ecs.Target{}
-		base.Source = ecsSource
-	}
-	ecsSource.Port = int(udpLayer.SrcPort)
+	if sourcePort := udpLayer.SrcPort; sourcePort != 0 {
+		ecsSource := base.Source
+		if ecsSource == nil {
+			ecsSource = &ecs.Target{}
+			base.Source = ecsSource
+		}
 
-	ecsDestination := base.Destination
-	if ecsDestination == nil {
-		ecsDestination = &ecs.Target{}
-		base.Destination = ecsDestination
+		ecsSource.Port = int(sourcePort)
 	}
-	ecsDestination.Port = int(udpLayer.DstPort)
+
+	if destinationPort := udpLayer.DstPort; destinationPort != 0 {
+		ecsDestination := base.Destination
+		if ecsDestination == nil {
+			ecsDestination = &ecs.Target{}
+			base.Destination = ecsDestination
+		}
+
+		ecsDestination.Port = int(destinationPort)
+	}
 
 	ecsNetwork := base.Network
 	if ecsNetwork == nil {

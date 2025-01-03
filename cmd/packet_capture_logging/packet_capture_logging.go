@@ -30,7 +30,7 @@ func main() {
 	logger = logger.With(slog.Group("event", slog.String("dataset", dataset)))
 	slog.SetDefault(logger)
 
-	interfaceName := "wlp0s20f3"
+	interfaceName := "lo"
 	handle, err := pcap.OpenLive(interfaceName, 1600, true, pcap.BlockForever)
 	if err != nil {
 		msg := "An error occurred when obtaining a PCAP handle."
@@ -46,7 +46,7 @@ func main() {
 		)
 	}
 
-	filter := "port 53"
+	filter := "port 8080"
 	if err := handle.SetBPFFilter(filter); err != nil {
 		msg := "An error occurred when setting a BPF filter."
 		motmedelLog.LogFatal(
