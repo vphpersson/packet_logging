@@ -16,8 +16,8 @@ import (
 	"errors"
 	"fmt"
 	"github.com/Motmedel/ecs_go/ecs"
+	motmedelContext "github.com/Motmedel/utils_go/pkg/context"
 	motmedelErrors "github.com/Motmedel/utils_go/pkg/errors"
-	motmedelLog "github.com/Motmedel/utils_go/pkg/log"
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/ringbuf"
@@ -55,11 +55,7 @@ func RunMapReceiver[T any](ctx context.Context, ebpfMap *ebpf.Map, callback func
 
 	ringbufReader, err := ringbuf.NewReader(ebpfMap)
 	if err != nil {
-		return &motmedelErrors.InputError{
-			Message: "An error occurred when making a ringbuf reader.",
-			Cause:   err,
-			Input:   ebpfMap,
-		}
+		return motmedelErrors.NewWithTrace(fmt.Errorf("ringbuf new reader: %w", err))
 	}
 	defer ringbufReader.Close()
 
@@ -75,26 +71,24 @@ func RunMapReceiver[T any](ctx context.Context, ebpfMap *ebpf.Map, callback func
 				return nil
 			}
 
-			return &motmedelErrors.CauseError{
-				Message: "An error occurred when reading from the ring buffer.",
-				Cause:   err,
-			}
+			return motmedelErrors.NewWithTrace(fmt.Errorf("ringbuf read: %w", err), ringbufReader)
 		}
 
 		if callback != nil {
 			go func() {
 				var event T
+
 				err := binary.Read(bytes.NewBuffer(record.RawSample), binary.BigEndian, &event)
 				if err != nil {
-					msg := "An error occurred when parsing a record."
-					motmedelLog.LogError(
-						fmt.Sprintf("%s Skipping.", msg),
-						&motmedelErrors.InputError{
-							Message: msg,
-							Cause:   err,
-							Input:   event,
-						},
-						slog.Default(),
+					slog.ErrorContext(
+						motmedelContext.WithErrorContextValue(
+							ctx,
+							motmedelErrors.NewWithTrace(
+								fmt.Errorf("binary read: %w", err),
+								record.RawSample,
+							),
+						),
+						"An error occurred when parsing a record.",
 					)
 					return
 				}
@@ -116,20 +110,12 @@ func RunTracingMapReceiver[T any](ctx context.Context, program *ebpf.Program, eb
 
 	tracingLink, err := link.AttachTracing(link.TracingOptions{Program: program})
 	if err != nil {
-		return &motmedelErrors.InputError{
-			Message: "An error occurred when attaching tracing to a program.",
-			Cause:   err,
-			Input:   program,
-		}
+		return motmedelErrors.NewWithTrace(fmt.Errorf("link attach tracing: %w", err))
 	}
 	defer tracingLink.Close()
 
 	if err = RunMapReceiver(ctx, ebpfMap, callback); err != nil {
-		return &motmedelErrors.InputError{
-			Message: "An error occurred when running map receiver.",
-			Cause:   err,
-			Input:   []any{ebpfMap, callback},
-		}
+		return fmt.Errorf("run map receiver: %w", err)
 	}
 
 	return nil
@@ -161,20 +147,12 @@ func RunTracepointMapReceiver[T any](
 
 	tracepointLink, err := link.Tracepoint(group, name, program, nil)
 	if err != nil {
-		return &motmedelErrors.InputError{
-			Message: "An error occurred when attaching tracepoint to a program.",
-			Cause:   err,
-			Input:   []any{group, name, program},
-		}
+		return motmedelErrors.NewWithTrace(fmt.Errorf("link tracepoint: %w", err))
 	}
 	defer tracepointLink.Close()
 
 	if err = RunMapReceiver(ctx, ebpfMap, callback); err != nil {
-		return &motmedelErrors.InputError{
-			Message: "An error occurred when running map receiver.",
-			Cause:   err,
-			Input:   []any{ebpfMap, callback},
-		}
+		return fmt.Errorf("run map receiver: %w", err)
 	}
 
 	return nil

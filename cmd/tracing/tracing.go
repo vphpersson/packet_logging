@@ -8,13 +8,14 @@ import (
 	"github.com/Motmedel/ecs_go/ecs"
 	motmedelErrors "github.com/Motmedel/utils_go/pkg/errors"
 	motmedelLog "github.com/Motmedel/utils_go/pkg/log"
+	motmedelErrorLogger "github.com/Motmedel/utils_go/pkg/log/error_logger"
 	"github.com/cilium/ebpf/rlimit"
+	"golang.org/x/sync/errgroup"
 	"log/slog"
 	"os"
 	"os/signal"
 	"packet_logging/pkg/packet_logging"
 	"packet_logging/pkg/packet_logging/tracing"
-	"snqk.dev/slog/meld"
 	"sync"
 	"syscall"
 	"time"
@@ -53,20 +54,24 @@ var tcpStates = map[int32]string{
 }
 
 func main() {
-	logger := slog.New(
-		meld.NewHandler(
-			slog.NewJSONHandler(
-				os.Stderr,
-				&slog.HandlerOptions{
-					AddSource:   false,
-					Level:       slog.LevelInfo,
-					ReplaceAttr: ecs.TimestampReplaceAttr,
+	logger := &motmedelErrorLogger.Logger{
+		Logger: slog.New(
+			&motmedelLog.ContextHandler{
+				Next: slog.NewJSONHandler(
+					os.Stdout,
+					&slog.HandlerOptions{
+						AddSource:   false,
+						Level:       slog.LevelInfo,
+						ReplaceAttr: ecs.TimestampReplaceAttr,
+					},
+				),
+				Extractors: []motmedelLog.ContextExtractor{
+					&motmedelLog.ErrorContextExtractor{},
 				},
-			),
-		),
-	)
-	logger = logger.With(slog.Group("event", slog.String("dataset", "tracing")))
-	slog.SetDefault(logger)
+			},
+		).With(slog.Group("event", slog.String("dataset", "tracing"))),
+	}
+	slog.SetDefault(logger.Logger)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -80,23 +85,18 @@ func main() {
 	}()
 
 	if err := rlimit.RemoveMemlock(); err != nil {
-		msg := "An error occurred when removing the memory lock."
-		motmedelLog.LogFatal(
-			fmt.Sprintf("%s Exiting.", msg),
-			&motmedelErrors.CauseError{Message: msg, Cause: err},
-			logger,
-			1,
+		logger.FatalWithExitingMessage(
+			"An error occurred when removing the memory lock.",
+			fmt.Errorf("rlimit remove mem lock: %w", err),
 		)
 	}
 
 	objs := packet_logging.BpfObjects{}
 	if err := packet_logging.LoadBpfObjects(&objs, nil); err != nil {
-		msg := "An error occurred when loading objects."
-		motmedelLog.LogFatal(
-			fmt.Sprintf("%s Exiting.", msg),
-			&motmedelErrors.InputError{Message: msg, Cause: err, Input: objs},
-			logger,
-			1,
+		logger.FatalWithExitingMessage(
+			"An error occurred when loading objects.",
+			fmt.Errorf("load bpf objects: %w", err),
+			objs,
 		)
 	}
 	defer objs.Close()
@@ -106,41 +106,128 @@ func main() {
 
 	var printMutex sync.Mutex
 
-	go func() {
-		program := objs.BpfPrograms.EnterExecve
-		ebpfMap := objs.BpfMaps.ExecveEvents
-		err := tracing.RunTracepointMapReceiver(
-			ctx,
-			program,
-			"syscalls",
-			"sys_enter_execve",
-			ebpfMap,
-			func(event *packet_logging.BpfExecveEvent) {
-				if event == nil {
-					return
-				}
+	errGroup, _ := errgroup.WithContext(context.Background())
 
-				var waitGroup sync.WaitGroup
+	errGroup.Go(
+		func() error {
+			program := objs.BpfPrograms.EnterExecve
+			ebpfMap := objs.BpfMaps.ExecveEvents
+			err := tracing.RunTracepointMapReceiver(
+				ctx,
+				program,
+				"syscalls",
+				"sys_enter_execve",
+				ebpfMap,
+				func(event *packet_logging.BpfExecveEvent) {
+					if event == nil {
+						return
+					}
 
-				waitGroup.Add(1)
-				go func() {
-					defer waitGroup.Done()
+					var waitGroup sync.WaitGroup
+
+					waitGroup.Add(1)
+					go func() {
+						defer waitGroup.Done()
+
+						base := &ecs.Base{
+							Event: &ecs.Event{
+								Reason:  "An execve call was made.",
+								Dataset: "tracing.execve",
+							},
+						}
+						tracing.EnrichWithExecveEvent(base, event)
+
+						data, err := json.Marshal(base)
+						if err != nil {
+							logger.Error(
+								"An error occurred when marshalling a execve base. Skipping.",
+								motmedelErrors.NewWithTrace(fmt.Errorf("json marshal: %w", err), base),
+							)
+							return
+						}
+
+						printMutex.Lock()
+						fmt.Println(string(data))
+						printMutex.Unlock()
+					}()
+
+					key := event.ProcessId
+
+					timedExecveEntryMapMutex.Lock()
+					te, ok := timedExecveEntryMap[key]
+					if !ok {
+						te = &TimedEvecveEntry{}
+					}
+
+					te.Event = event
+					timedExecveEntryMap[key] = te
+
+					timedExecveEntryMapMutex.Unlock()
+
+					if teTimer := te.Timer; teTimer != nil {
+						teTimer.Stop()
+					}
+
+					var afterFunc func()
+
+					afterFunc = func() {
+						processExists, err := ProcessExists(int(event.ProcessId))
+						if processExists && err != nil {
+							timedExecveEntryMapMutex.Lock()
+							delete(timedExecveEntryMap, event.ProcessId)
+							timedExecveEntryMapMutex.Unlock()
+						} else {
+							te.Timer = time.AfterFunc(30*time.Second, afterFunc)
+						}
+					}
+
+					te.Timer = time.AfterFunc(30*time.Second, afterFunc)
+
+					waitGroup.Wait()
+				},
+			)
+			if err != nil {
+				return motmedelErrors.NewWithTrace(fmt.Errorf("run tracepoint map receiver (execve): %w", err))
+			}
+
+			return nil
+		},
+	)
+
+	errGroup.Go(
+		func() error {
+			program := objs.BpfPrograms.TcpConnect
+			ebpfMap := objs.BpfMaps.ConnectEvents
+			err := tracing.RunTracingMapReceiver(
+				ctx,
+				program,
+				ebpfMap,
+				func(event *packet_logging.BpfConnectEvent) {
+					if event == nil {
+						return
+					}
 
 					base := &ecs.Base{
 						Event: &ecs.Event{
-							Reason:  "An execve call was made.",
-							Dataset: "tracing.execve",
+							Reason:  "A connect call was made.",
+							Dataset: "tracing.connect",
 						},
 					}
-					tracing.EnrichWithExecveEvent(base, event)
+
+					timedExecveEntryMapMutex.RLock()
+					execveEvent, ok := timedExecveEntryMap[event.ProcessId]
+					timedExecveEntryMapMutex.RUnlock()
+					if ok {
+						tracing.EnrichWithExecveEvent(base, execveEvent.Event)
+					}
+
+					tracing.EnrichWithConnectEvent(base, event)
 
 					data, err := json.Marshal(base)
 					if err != nil {
-						msg := "An error occurred when marshalling a destroy connection base."
-						motmedelLog.LogError(
-							fmt.Sprintf("%s Skipping.", msg),
-							&motmedelErrors.InputError{Message: msg, Cause: err, Input: base},
-							logger,
+						logger.Error(
+							"An error occurred when marshalling a connect base. Skipping.",
+							motmedelErrors.NewWithTrace(fmt.Errorf("json marshal: %w", err), base),
 						)
 						return
 					}
@@ -148,263 +235,161 @@ func main() {
 					printMutex.Lock()
 					fmt.Println(string(data))
 					printMutex.Unlock()
-				}()
+				},
+			)
+			if err != nil {
+				return motmedelErrors.NewWithTrace(fmt.Errorf("run tracing map receiver (tcp connect): %w", err))
+			}
 
-				key := event.ProcessId
+			return nil
+		},
+	)
 
-				timedExecveEntryMapMutex.Lock()
-				te, ok := timedExecveEntryMap[key]
-				if !ok {
-					te = &TimedEvecveEntry{}
-				}
-
-				te.Event = event
-				timedExecveEntryMap[key] = te
-
-				timedExecveEntryMapMutex.Unlock()
-
-				if teTimer := te.Timer; teTimer != nil {
-					teTimer.Stop()
-				}
-
-				var afterFunc func()
-
-				afterFunc = func() {
-					processExists, err := ProcessExists(int(event.ProcessId))
-					if processExists && err != nil {
-						timedExecveEntryMapMutex.Lock()
-						delete(timedExecveEntryMap, event.ProcessId)
-						timedExecveEntryMapMutex.Unlock()
-					} else {
-						te.Timer = time.AfterFunc(30*time.Second, afterFunc)
+	errGroup.Go(
+		func() error {
+			program := objs.BpfPrograms.NfCtHelperDestroy
+			ebpfMap := objs.BpfMaps.DestroyConnectionEvents
+			err := tracing.RunTracingMapReceiver(
+				ctx,
+				program,
+				ebpfMap,
+				func(event *packet_logging.BpfDestroyConnectionEvent) {
+					if event == nil {
+						return
 					}
-				}
 
-				te.Timer = time.AfterFunc(30*time.Second, afterFunc)
-
-				waitGroup.Wait()
-			},
-		)
-		if err != nil {
-			msg := "An error occurred when setting up a receiver."
-			motmedelLog.LogFatal(
-				fmt.Sprintf("%s Exiting.", msg),
-				&motmedelErrors.InputError{Message: msg, Cause: err, Input: []any{program, ebpfMap}},
-				logger,
-				1,
-			)
-		}
-	}()
-
-	go func() {
-		program := objs.BpfPrograms.TcpConnect
-		ebpfMap := objs.BpfMaps.ConnectEvents
-		err := tracing.RunTracingMapReceiver(
-			ctx,
-			program,
-			ebpfMap,
-			func(event *packet_logging.BpfConnectEvent) {
-				if event == nil {
-					return
-				}
-
-				base := &ecs.Base{
-					Event: &ecs.Event{
-						Reason:  "A connect call was made.",
-						Dataset: "tracing.connect",
-					},
-				}
-
-				timedExecveEntryMapMutex.RLock()
-				execveEvent, ok := timedExecveEntryMap[event.ProcessId]
-				timedExecveEntryMapMutex.RUnlock()
-				if ok {
-					tracing.EnrichWithExecveEvent(base, execveEvent.Event)
-				}
-
-				tracing.EnrichWithConnectEvent(base, event)
-
-				data, err := json.Marshal(base)
-				if err != nil {
-					msg := "An error occurred when marshalling a connect base."
-					motmedelLog.LogError(
-						fmt.Sprintf("%s Skipping.", msg),
-						&motmedelErrors.InputError{Message: msg, Cause: err, Input: base},
-						logger,
-					)
-					return
-				}
-
-				printMutex.Lock()
-				fmt.Println(string(data))
-				printMutex.Unlock()
-			},
-		)
-		if err != nil {
-			msg := "An error occurred when setting up a receiver."
-			motmedelLog.LogFatal(
-				fmt.Sprintf("%s Exiting.", msg),
-				&motmedelErrors.InputError{Message: msg, Cause: err, Input: []any{program, ebpfMap}},
-				logger,
-				1,
-			)
-		}
-	}()
-
-	go func() {
-		program := objs.BpfPrograms.NfCtHelperDestroy
-		ebpfMap := objs.BpfMaps.DestroyConnectionEvents
-		err := tracing.RunTracingMapReceiver(
-			ctx,
-			program,
-			ebpfMap,
-			func(event *packet_logging.BpfDestroyConnectionEvent) {
-				if event == nil {
-					return
-				}
-
-				base := &ecs.Base{
-					Event: &ecs.Event{
-						Reason:  "A connection was destroyed by Conntrack.",
-						Dataset: "tracing.destroy_connection",
-					},
-				}
-
-				tracing.EnrichWithDestroyConnectionEvent(base, event)
-
-				data, err := json.Marshal(base)
-				if err != nil {
-					msg := "An error occurred when marshalling a destroy connection base."
-					motmedelLog.LogError(
-						fmt.Sprintf("%s Skipping.", msg),
-						&motmedelErrors.InputError{
-							Message: msg,
-							Cause:   err,
-							Input:   base,
+					base := &ecs.Base{
+						Event: &ecs.Event{
+							Reason:  "A connection was destroyed by Conntrack.",
+							Dataset: "tracing.destroy_connection",
 						},
-						logger,
-					)
-					return
-				}
+					}
 
-				//s := translateStatusBits(int(event.ConntrackStatus))
-				//fmt.Println(strings.Join(s, ", "))
+					tracing.EnrichWithDestroyConnectionEvent(base, event)
 
-				printMutex.Lock()
-				fmt.Println(string(data))
-				printMutex.Unlock()
-			},
-		)
-		if err != nil {
-			msg := "An error occurred when setting up a receiver."
-			motmedelLog.LogFatal(
-				fmt.Sprintf("%s Exiting.", msg),
-				&motmedelErrors.InputError{Message: msg, Cause: err, Input: []any{program, ebpfMap}},
-				logger,
-				1,
+					data, err := json.Marshal(base)
+					if err != nil {
+						logger.Error(
+							"An error occurred when marshalling a destroy connection base. Skipping.",
+							motmedelErrors.NewWithTrace(fmt.Errorf("json marshal: %w", err), base),
+						)
+						return
+					}
+
+					//s := translateStatusBits(int(event.ConntrackStatus))
+					//fmt.Println(strings.Join(s, ", "))
+
+					printMutex.Lock()
+					fmt.Println(string(data))
+					printMutex.Unlock()
+				},
 			)
-		}
-	}()
+			if err != nil {
+				return motmedelErrors.NewWithTrace(fmt.Errorf("run tracing map receiver (nf ct helper descroy): %w", err))
+			}
 
-	go func() {
-		program := objs.BpfPrograms.TcpRetransmitSkb
-		ebpfMap := objs.BpfMaps.TcpRetransmissionEvents
-		err := tracing.RunTracepointMapReceiver(
-			ctx,
-			program,
-			"tcp",
-			"tcp_retransmit_skb",
-			ebpfMap,
-			func(event *packet_logging.BpfTcpRetransmissionEvent) {
-				if event == nil {
-					return
-				}
+			return nil
+		},
+	)
 
-				base := &ecs.Base{
-					Event: &ecs.Event{
-						Reason:  "A TCP retransmission was performed.",
-						Dataset: "tracing.tcp_retransmit_skb",
-					},
-				}
+	errGroup.Go(
+		func() error {
+			program := objs.BpfPrograms.TcpRetransmitSkb
+			ebpfMap := objs.BpfMaps.TcpRetransmissionEvents
+			err := tracing.RunTracepointMapReceiver(
+				ctx,
+				program,
+				"tcp",
+				"tcp_retransmit_skb",
+				ebpfMap,
+				func(event *packet_logging.BpfTcpRetransmissionEvent) {
+					if event == nil {
+						return
+					}
 
-				tracing.EnrichWithTcpRetransmissionEvent(base, event)
+					base := &ecs.Base{
+						Event: &ecs.Event{
+							Reason:  "A TCP retransmission was performed.",
+							Dataset: "tracing.tcp_retransmit_skb",
+						},
+					}
 
-				data, err := json.Marshal(base)
-				if err != nil {
-					msg := "An error occurred when marshalling a tcp retransmission skb base."
-					motmedelLog.LogError(
-						fmt.Sprintf("%s Skipping.", msg),
-						&motmedelErrors.InputError{Message: msg, Cause: err, Input: base},
-						logger,
-					)
-					return
-				}
+					tracing.EnrichWithTcpRetransmissionEvent(base, event)
 
-				printMutex.Lock()
-				fmt.Println(string(data))
-				printMutex.Unlock()
-			},
-		)
-		if err != nil {
-			msg := "An error occurred when setting up a receiver."
-			motmedelLog.LogFatal(
-				fmt.Sprintf("%s Exiting.", msg),
-				&motmedelErrors.InputError{Message: msg, Cause: err, Input: []any{program, ebpfMap}},
-				logger,
-				1,
+					data, err := json.Marshal(base)
+					if err != nil {
+						logger.Error(
+							"An error occurred when marshalling a tcp retransmission skb base. Skipping.",
+							motmedelErrors.NewWithTrace(fmt.Errorf("json marshal: %w", err), base),
+						)
+						return
+					}
+
+					printMutex.Lock()
+					fmt.Println(string(data))
+					printMutex.Unlock()
+				},
 			)
-		}
-	}()
+			if err != nil {
+				return motmedelErrors.NewWithTrace(fmt.Errorf("run tracepoint map receiver (tcp retransmit skb): %w", err))
+			}
 
-	go func() {
-		program := objs.BpfPrograms.TcpRetransmitSkb
-		ebpfMap := objs.BpfMaps.TcpRetransmissionSynackEvents
-		err := tracing.RunTracepointMapReceiver(
-			ctx,
-			program,
-			"tcp",
-			"tcp_retransmit_synack",
-			ebpfMap,
-			func(event *packet_logging.BpfTcpRetransmissionSynackEvent) {
-				if event == nil {
-					return
-				}
+			return nil
+		},
+	)
 
-				base := &ecs.Base{
-					Event: &ecs.Event{
-						Reason:  "A TCP retransmission was performed.",
-						Dataset: "tracing.tcp_retransmit_synack",
-					},
-				}
+	errGroup.Go(
+		func() error {
+			program := objs.BpfPrograms.TcpRetransmitSkb
+			ebpfMap := objs.BpfMaps.TcpRetransmissionSynackEvents
+			err := tracing.RunTracepointMapReceiver(
+				ctx,
+				program,
+				"tcp",
+				"tcp_retransmit_synack",
+				ebpfMap,
+				func(event *packet_logging.BpfTcpRetransmissionSynackEvent) {
+					if event == nil {
+						return
+					}
 
-				tracing.EnrichWithTcpRetransmissionSynAckEvent(base, event)
+					base := &ecs.Base{
+						Event: &ecs.Event{
+							Reason:  "A TCP retransmission was performed.",
+							Dataset: "tracing.tcp_retransmit_synack",
+						},
+					}
 
-				data, err := json.Marshal(base)
-				if err != nil {
-					msg := "An error occurred when marshalling a tcp retransmission skb base."
-					motmedelLog.LogError(
-						fmt.Sprintf("%s Skipping.", msg),
-						&motmedelErrors.InputError{Message: msg, Cause: err, Input: base},
-						logger,
-					)
-					return
-				}
+					tracing.EnrichWithTcpRetransmissionSynAckEvent(base, event)
 
-				printMutex.Lock()
-				fmt.Println(string(data))
-				printMutex.Unlock()
-			},
-		)
-		if err != nil {
-			msg := "An error occurred when setting up a receiver."
-			motmedelLog.LogFatal(
-				fmt.Sprintf("%s Exiting.", msg),
-				&motmedelErrors.InputError{Message: msg, Cause: err, Input: []any{program, ebpfMap}},
-				logger,
-				1,
+					data, err := json.Marshal(base)
+					if err != nil {
+						logger.Error(
+							"An error occurred when marshalling a tcp retransmit synack skb base.",
+							motmedelErrors.NewWithTrace(fmt.Errorf("json marshal: %w", err), base),
+						)
+						return
+					}
+
+					printMutex.Lock()
+					fmt.Println(string(data))
+					printMutex.Unlock()
+				},
 			)
-		}
-	}()
+			if err != nil {
+				return motmedelErrors.NewWithTrace(fmt.Errorf("run tracepoint map receiver (tcp retransmit skb): %w", err))
+			}
+
+			return nil
+		},
+	)
+
+	if err := errGroup.Wait(); err != nil {
+		logger.FatalWithExitingMessage(
+			"An error occurred when initializing a tracer.",
+			fmt.Errorf("errgroup wait: %w", err),
+		)
+	}
 
 	//go func() {
 	//	program := objs.BpfPrograms.SockSetState

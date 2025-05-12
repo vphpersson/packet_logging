@@ -3,61 +3,51 @@ package main
 import (
 	"fmt"
 	"github.com/Motmedel/ecs_go/ecs"
-	"github.com/Motmedel/utils_go/pkg/errors"
+	motmedelErrors "github.com/Motmedel/utils_go/pkg/errors"
 	motmedelLog "github.com/Motmedel/utils_go/pkg/log"
+	motmedelErrorLogger "github.com/Motmedel/utils_go/pkg/log/error_logger"
 	"github.com/gopacket/gopacket"
 	"github.com/gopacket/gopacket/pcap"
 	"log/slog"
 	"os"
-	"snqk.dev/slog/meld"
 )
 
 const dataset = "packet_capture_logging"
 
 func main() {
-	logger := slog.New(
-		meld.NewHandler(
-			slog.NewJSONHandler(
-				os.Stderr,
-				&slog.HandlerOptions{
-					AddSource:   false,
-					Level:       slog.LevelInfo,
-					ReplaceAttr: ecs.TimestampReplaceAttr,
+	logger := &motmedelErrorLogger.Logger{
+		Logger: slog.New(
+			&motmedelLog.ContextHandler{
+				Next: slog.NewJSONHandler(
+					os.Stdout,
+					&slog.HandlerOptions{
+						AddSource:   false,
+						Level:       slog.LevelInfo,
+						ReplaceAttr: ecs.TimestampReplaceAttr,
+					},
+				),
+				Extractors: []motmedelLog.ContextExtractor{
+					&motmedelLog.ErrorContextExtractor{},
 				},
-			),
-		),
-	)
-	logger = logger.With(slog.Group("event", slog.String("dataset", dataset)))
-	slog.SetDefault(logger)
+			},
+		).With(slog.Group("event", slog.String("dataset", dataset))),
+	}
+	slog.SetDefault(logger.Logger)
 
 	interfaceName := "lo"
 	handle, err := pcap.OpenLive(interfaceName, 1600, true, pcap.BlockForever)
 	if err != nil {
-		msg := "An error occurred when obtaining a PCAP handle."
-		motmedelLog.LogFatal(
-			fmt.Sprintf("%s Exiting.", msg),
-			&errors.InputError{
-				Message: msg,
-				Cause:   err,
-				Input:   interfaceName,
-			},
-			logger,
-			1,
+		logger.FatalWithExitingMessage(
+			"An error occurred when obtaining a PCAP handle.",
+			motmedelErrors.NewWithTrace(fmt.Errorf("pcap open live: %w", err), interfaceName),
 		)
 	}
 
 	filter := "port 8080"
 	if err := handle.SetBPFFilter(filter); err != nil {
-		msg := "An error occurred when setting a BPF filter."
-		motmedelLog.LogFatal(
-			fmt.Sprintf("%s Exiting.", msg),
-			&errors.InputError{
-				Message: msg,
-				Cause:   err,
-				Input:   filter,
-			},
-			logger,
-			1,
+		logger.FatalWithExitingMessage(
+			"An error occurred when setting a BPF filter.",
+			motmedelErrors.NewWithTrace(fmt.Errorf("handle set bpf filter: %w", err), handle, interfaceName),
 		)
 	}
 
