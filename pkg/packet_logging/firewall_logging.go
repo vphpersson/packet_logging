@@ -89,7 +89,7 @@ func EnrichWithNflogAttribute(nflogAttribute *nflog.Attribute, base *ecs.Base) {
 
 	var egressInterfaceName string
 	if outDev := nflogAttribute.OutDev; outDev != nil {
-		if ecsObserverIngress == nil {
+		if ecsObserverEgress == nil {
 			ecsObserverEgress = &ecs.ObserverIngressEgress{}
 			ecsObserver.Egress = ecsObserverEgress
 		}
