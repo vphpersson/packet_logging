@@ -262,9 +262,12 @@ func EnrichFromIpv4Layer(ipv4Layer *layers.IPv4, base *ecs.Base) {
 		base.Network = ecsNetwork
 	}
 
-	protocolNumber := strconv.Itoa(int(ipv4Layer.Protocol))
-	ecsNetwork.IanaNumber = protocolNumber
-	ecsNetwork.Transport = IanaProtocolNumberToText[protocolNumber]
+	if protocolNumber := int(ipv4Layer.Protocol); protocolNumber != 0 {
+		protocolNumberString := strconv.Itoa(protocolNumber)
+		ecsNetwork.IanaNumber = protocolNumberString
+		ecsNetwork.Transport = IanaProtocolNumberToText[protocolNumberString]
+	}
+
 	ecsNetwork.Type = "ipv4"
 }
 
@@ -305,9 +308,12 @@ func EnrichFromIpv6Layer(ipv6Layer *layers.IPv6, base *ecs.Base) {
 		base.Network = ecsNetwork
 	}
 
-	protocolNumber := strconv.Itoa(int(ipv6Layer.NextHeader))
-	ecsNetwork.IanaNumber = protocolNumber
-	ecsNetwork.Transport = IanaProtocolNumberToText[protocolNumber]
+	if protocolNumber := int(ipv6Layer.NextHeader); protocolNumber != 0 {
+		protocolNumberString := strconv.Itoa(protocolNumber)
+		ecsNetwork.IanaNumber = protocolNumberString
+		ecsNetwork.Transport = IanaProtocolNumberToText[protocolNumberString]
+	}
+
 	ecsNetwork.Type = "ipv6"
 }
 

@@ -1,5 +1,5 @@
-github.com/Motmedel/ecs_go v0.0.62 h1:zoS2l556+tDVd635T7OfP4JLVyA8mrfReaDOA9FyxvQ=
-github.com/Motmedel/ecs_go v0.0.62/go.mod h1:UwZhGtHYOtPrJ22s5hQTDpTbDPq9m+vfHItb8t++QKw=
+github.com/Motmedel/ecs_go v0.0.63 h1:nNtDZGrYIpt1EGyo34JiE97TJHZ58unsvZMwJaT63lk=
+github.com/Motmedel/ecs_go v0.0.63/go.mod h1:LBiQKqIHImB9hUAx6Ab7LcjbMFSxuU1ZFe9h5eCFs60=
 github.com/Motmedel/utils_go v0.0.205 h1:YkRyrVT5xKPnjaBsdbg6qD9ZyVIJPoNXorzR3EA7G5g=
 github.com/Motmedel/utils_go v0.0.205/go.mod h1:kKm8jM7GA8M7ICIImi5etOMixRgQfnStBPjEoCMTgbg=
 github.com/Motmedel/utils_go/pkg/net/domain_breakdown v0.0.5 h1:57lx54tX6LbHjMNv0qGnwQB/eo7axhbDnd6rVWyWjxc=
